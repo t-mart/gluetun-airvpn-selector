@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Sign in | AirVPN selector{% endblock %}
+{% block body %}
+  <main class="login-shell">
+    <section class="login-card">
+      <p class="eyebrow">Gluetun companion</p>
+      <h1>Sign in</h1>
+      <p>Use the API key from the Gluetun control server.</p>
+      {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+      <form method="post" action="/login">
+        <label for="api-key">API key</label>
+        <input id="api-key" name="api_key" type="password" required autofocus autocomplete="current-password">
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+    </section>
+  </main>
+{% endblock %}

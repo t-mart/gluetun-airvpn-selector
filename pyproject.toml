@@ -1,0 +1,29 @@
+[project]
+name = "gluetun-airvpn-selector"
+version = "0.1.0"
+description = "Control AirVPN server filters in a Gluetun instance"
+readme = "README.md"
+authors = [
+    { name = "Tim Martin", email = "tim@timmart.in" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "httpx2>=2.12.0",
+    "jinja2>=3.1.6",
+    "starlette>=1.6.0",
+    "uvicorn>=0.52.4",
+]
+
+[project.scripts]
+gluetun-airvpn-selector = "gluetun_airvpn_selector:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.6",
+    "ty>=0.0.79",
+]

@@ -1,0 +1,442 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "description": "",
+  "type": "object",
+  "properties": {
+    "deprecated_warning": {
+      "type": "string",
+      "minLength": 1
+    },
+    "servers": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "required": [
+          "public_name",
+          "country_name",
+          "country_code",
+          "location",
+          "continent",
+          "bw",
+          "bw_max",
+          "users",
+          "currentload",
+          "ip_v4_in1",
+          "ip_v4_in2",
+          "ip_v4_in3",
+          "ip_v4_in4",
+          "ip_v6_in1",
+          "ip_v6_in2",
+          "ip_v6_in3",
+          "ip_v6_in4",
+          "health",
+          "warning"
+        ],
+        "properties": {
+          "public_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "country_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "country_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bw": {
+            "type": "number"
+          },
+          "bw_max": {
+            "type": "number"
+          },
+          "users": {
+            "type": "number"
+          },
+          "currentload": {
+            "type": "number"
+          },
+          "ip_v4_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "health": {
+            "type": "string",
+            "minLength": 1
+          },
+          "warning": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "routing": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "required": [
+          "public_name",
+          "country_name",
+          "country_code",
+          "location",
+          "continent",
+          "bw",
+          "bw_max",
+          "currentload",
+          "health"
+        ],
+        "properties": {
+          "public_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "country_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "country_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bw": {
+            "type": "number"
+          },
+          "bw_max": {
+            "type": "number"
+          },
+          "currentload": {
+            "type": "number"
+          },
+          "health": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "countries": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "required": [
+          "country_name",
+          "country_code",
+          "server_best",
+          "bw",
+          "bw_max",
+          "users",
+          "servers",
+          "currentload",
+          "ip_v4_in1",
+          "ip_v4_in2",
+          "ip_v4_in3",
+          "ip_v4_in4",
+          "ip_v6_in1",
+          "ip_v6_in2",
+          "ip_v6_in3",
+          "ip_v6_in4",
+          "health"
+        ],
+        "properties": {
+          "country_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "country_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "server_best": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bw": {
+            "type": "number"
+          },
+          "bw_max": {
+            "type": "number"
+          },
+          "users": {
+            "type": "number"
+          },
+          "servers": {
+            "type": "number"
+          },
+          "currentload": {
+            "type": "number"
+          },
+          "ip_v4_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "health": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "continents": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "required": [
+          "public_name",
+          "server_best",
+          "bw",
+          "bw_max",
+          "users",
+          "servers",
+          "currentload",
+          "ip_v4_in1",
+          "ip_v4_in2",
+          "ip_v4_in3",
+          "ip_v4_in4",
+          "ip_v6_in1",
+          "ip_v6_in2",
+          "ip_v6_in3",
+          "ip_v6_in4",
+          "health"
+        ],
+        "properties": {
+          "public_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "server_best": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bw": {
+            "type": "number"
+          },
+          "bw_max": {
+            "type": "number"
+          },
+          "users": {
+            "type": "number"
+          },
+          "servers": {
+            "type": "number"
+          },
+          "currentload": {
+            "type": "number"
+          },
+          "ip_v4_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "health": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "planets": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "required": [
+          "public_name",
+          "server_best",
+          "bw",
+          "bw_max",
+          "users",
+          "servers",
+          "currentload",
+          "ip_v4_in1",
+          "ip_v4_in2",
+          "ip_v4_in3",
+          "ip_v4_in4",
+          "ip_v6_in1",
+          "ip_v6_in2",
+          "ip_v6_in3",
+          "ip_v6_in4",
+          "health"
+        ],
+        "properties": {
+          "public_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "server_best": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bw": {
+            "type": "number"
+          },
+          "bw_max": {
+            "type": "number"
+          },
+          "users": {
+            "type": "number"
+          },
+          "servers": {
+            "type": "number"
+          },
+          "currentload": {
+            "type": "number"
+          },
+          "ip_v4_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v4_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in2": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in3": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip_v6_in4": {
+            "type": "string",
+            "minLength": 1
+          },
+          "health": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "deprecated_warning",
+    "servers",
+    "routing",
+    "countries",
+    "continents",
+    "planets",
+    "result"
+  ]
+}
