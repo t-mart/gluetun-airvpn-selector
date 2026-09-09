@@ -231,6 +231,68 @@ async def test_public_ip_response_validation() -> None:
 
 
 @pytest.mark.anyio
+async def test_public_ip_keeps_optional_location_data() -> None:
+    document = {
+        "public_ip": "198.54.128.219",
+        "region": "Colorado",
+        "country": "United States",
+        "city": "Denver",
+        "organization": "TZULO",
+        "location": "39.750099,-104.995697",
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=document)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        result = await GluetunClient(client, config()).connectivity_test(
+            Credentials(api_key="secret")
+        )
+
+    assert result.to_dict() | {"duration_ms": 0, "observed_at": ""} == {
+        "ip": "198.54.128.219",
+        "duration_ms": 0,
+        "source_url": "http://gluetun:8000/v1/publicip/ip",
+        "observed_at": "",
+        "region": "Colorado",
+        "country": "United States",
+        "city": "Denver",
+        "organization": "TZULO",
+        "location": "39.750099,-104.995697",
+        "maps_url": (
+            "https://www.google.com/maps/search/?api=1&query=39.750099%2C-104.995697"
+        ),
+    }
+
+
+@pytest.mark.anyio
+async def test_public_ip_ignores_missing_or_invalid_optional_data() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "public_ip": "203.0.113.8",
+                "region": " ",
+                "country": 42,
+                "location": "91,-104",
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        result = await GluetunClient(client, config()).connectivity_test(
+            Credentials(api_key="secret")
+        )
+
+    assert result.region is None
+    assert result.country is None
+    assert result.city is None
+    assert result.organization is None
+    assert result.location is None
+    assert result.maps_url is None
+    assert set(result.to_dict()) == {"ip", "duration_ms", "source_url", "observed_at"}
+
+
+@pytest.mark.anyio
 async def test_public_ip_retries_after_reconnect_delay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -251,3 +313,52 @@ async def test_public_ip_retries_after_reconnect_delay(
 
     assert result.ip == "203.0.113.8"
     assert delays == [5, 5]
+
+
+@pytest.mark.anyio
+async def test_public_ip_poll_waits_for_changed_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(("203.0.113.8", "203.0.113.8", "198.51.100.4"))
+    delays: list[float] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"public_ip": next(responses)})
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(services.asyncio, "sleep", record_delay)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        result = await GluetunClient(client, config()).connectivity_test_with_retry(
+            Credentials(api_key="secret"), previous_ip="203.0.113.8"
+        )
+
+    assert result.ip == "198.51.100.4"
+    assert delays == [1, 1]
+
+
+@pytest.mark.anyio
+async def test_public_ip_poll_stops_after_ten_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = 0
+    delays: list[float] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        return httpx2.Response(200, json={"public_ip": "203.0.113.8"})
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(services.asyncio, "sleep", record_delay)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        result = await GluetunClient(client, config()).connectivity_test_with_retry(
+            Credentials(api_key="secret"), previous_ip="203.0.113.8"
+        )
+
+    assert result.ip == "203.0.113.8"
+    assert requests == 11
+    assert delays == [1] * 10

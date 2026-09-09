@@ -24,6 +24,8 @@ from .domain import (
 IP_TIMEOUT_SECONDS = 10.0
 PUBLIC_IP_RETRY_ATTEMPTS = 3
 PUBLIC_IP_RETRY_SECONDS = 5.0
+PUBLIC_IP_CHANGE_ATTEMPTS = 11
+PUBLIC_IP_CHANGE_INTERVAL_SECONDS = 1.0
 
 
 class ServiceError(RuntimeError):
@@ -73,10 +75,7 @@ class ConnectivityResult:
     def maps_url(self) -> str | None:
         if self.location is None:
             return None
-        return (
-            "https://www.google.com/maps/search/?api=1&query="
-            f"{quote(self.location)}"
-        )
+        return f"https://www.google.com/maps/search/?api=1&query={quote(self.location)}"
 
     def to_dict(self) -> dict[str, Any]:
         document = {
@@ -280,19 +279,35 @@ class GluetunClient:
         credentials: Credentials,
         *,
         initial_delay_seconds: float = 0,
+        previous_ip: str | None = None,
     ) -> ConnectivityResult:
         if initial_delay_seconds > 0:
             await asyncio.sleep(initial_delay_seconds)
 
+        attempts = (
+            PUBLIC_IP_CHANGE_ATTEMPTS
+            if previous_ip is not None
+            else PUBLIC_IP_RETRY_ATTEMPTS
+        )
+        interval = (
+            PUBLIC_IP_CHANGE_INTERVAL_SECONDS
+            if previous_ip is not None
+            else PUBLIC_IP_RETRY_SECONDS
+        )
         attempt = 1
         while True:
             try:
-                return await self.connectivity_test(credentials)
+                result = await self.connectivity_test(credentials)
             except ServiceError as error:
-                if error.status_code == 401 or attempt >= PUBLIC_IP_RETRY_ATTEMPTS:
+                if error.status_code == 401 or attempt >= attempts:
                     raise
-                attempt += 1
-                await asyncio.sleep(PUBLIC_IP_RETRY_SECONDS)
+            else:
+                if previous_ip is None or result.ip != previous_ip:
+                    return result
+                if attempt >= attempts:
+                    return result
+            attempt += 1
+            await asyncio.sleep(interval)
 
     async def _request(
         self,

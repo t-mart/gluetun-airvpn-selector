@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from math import floor
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -56,7 +57,7 @@ def _bandwidth_unit(mbps: float) -> tuple[float, str]:
 
 def _format_bandwidth_usage(bandwidth: float, bandwidth_max: float) -> str:
     scale, unit = _bandwidth_unit(bandwidth_max)
-    percentage = round(_utilization(bandwidth, bandwidth_max))
+    percentage = _round_percentage(_utilization(bandwidth, bandwidth_max))
     maximum = _format_decimal(bandwidth_max / scale)
     return f"{percentage}% of {maximum} {unit}"
 
@@ -67,6 +68,10 @@ def _format_decimal(value: float) -> str:
 
 def _format_users(value: float) -> str:
     return f"{round(value):,}"
+
+
+def _round_percentage(value: float) -> int:
+    return floor(value + 0.5)
 
 
 def _utilization(bandwidth: float, bandwidth_max: float) -> float:
@@ -89,6 +94,7 @@ templates = Environment(
 )
 templates.filters.update(
     bandwidth_usage=_format_bandwidth_usage,
+    percentage=_round_percentage,
     users=_format_users,
     utilization=_utilization,
     utilization_color=_utilization_color,
@@ -325,18 +331,21 @@ async def connectivity_test(request: Request) -> Response:
     credentials = _request_credentials(request)
     if credentials is None:
         return _error("authentication_required", "Authentication is required.", 401)
+    session_key = _session_key(request)
+    previous = request.app.state.connectivity.get(session_key)
+    after_selection = request.query_params.get("after_selection") == "1"
     try:
         initial_delay = (
-            PUBLIC_IP_RETRY_SECONDS
-            if request.query_params.get("after_selection") == "1"
-            else 0
+            PUBLIC_IP_RETRY_SECONDS if after_selection and previous is None else 0
         )
         result = await request.app.state.gluetun.connectivity_test_with_retry(
-            credentials, initial_delay_seconds=initial_delay
+            credentials,
+            initial_delay_seconds=initial_delay,
+            previous_ip=previous.ip if after_selection and previous else None,
         )
     except ServiceError as error:
         return _error_response(error)
-    request.app.state.connectivity[_session_key(request)] = result
+    request.app.state.connectivity[session_key] = result
     return JSONResponse(result.to_dict())
 
 

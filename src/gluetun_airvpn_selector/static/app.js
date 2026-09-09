@@ -163,7 +163,7 @@ async function saveSelection(context) {
     if (!response.ok) throw new Error(result.error?.message || "The selection update failed.");
     let publicIpError = "";
     try {
-      await requestPublicIp(true);
+      if (!await requestPublicIp(true)) return;
     } catch (requestError) {
       publicIpError = requestError.message;
     }
@@ -183,9 +183,10 @@ async function requestPublicIp(afterSelection = false) {
   const result = await response.json();
   if (response.status === 401) {
     window.location.assign("/login");
-    return;
+    return false;
   }
   if (!response.ok) throw new Error(result.error?.message || "The public IP check failed.");
+  return true;
 }
 
 function showError(element, message) {

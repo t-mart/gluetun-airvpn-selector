@@ -10,6 +10,7 @@ import httpx2
 import pytest
 from starlette.applications import Starlette
 
+from gluetun_airvpn_selector import services
 from gluetun_airvpn_selector.domain import Selection, parse_catalog
 from gluetun_airvpn_selector.web import _format_bandwidth_usage, _options, create_app
 from tests.test_domain import api_server
@@ -29,9 +30,12 @@ async def browser_for(
     authenticated: bool = True,
     selection: Selection | None = None,
     servers: list[dict[str, object]] | None = None,
+    public_ip_document: dict[str, object] | None = None,
+    public_ip_documents: list[dict[str, object]] | None = None,
 ) -> AsyncIterator[tuple[httpx2.AsyncClient, list[httpx2.Request]]]:
     requests: list[httpx2.Request] = []
     selection = selection if selection is not None else Selection(countries=("Canada",))
+    public_ip_responses = iter(public_ip_documents or ())
 
     def upstream(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
@@ -45,7 +49,20 @@ async def browser_for(
         if request.url.path == "/v1/vpn/status":
             return httpx2.Response(200, json={"status": "running"})
         if request.url.path == "/v1/publicip/ip":
-            return httpx2.Response(200, json={"public_ip": "203.0.113.8"})
+            return httpx2.Response(
+                200,
+                json=next(public_ip_responses)
+                if public_ip_documents is not None
+                else public_ip_document
+                or {
+                    "public_ip": "203.0.113.8",
+                    "region": "Colorado",
+                    "country": "United States",
+                    "city": "Denver",
+                    "organization": "TZULO",
+                    "location": "39.750099,-104.995697",
+                },
+            )
         if request.method == "PUT":
             return httpx2.Response(200, text="VPN settings changed")
         return httpx2.Response(
@@ -85,6 +102,7 @@ async def test_homepage_renders_state_and_security_headers() -> None:
     assert response.status_code == 200
     assert "Agena" in response.text
     assert "203.0.113.8" in response.text
+    assert 'href="https://ifconfig.co/?ip=203.0.113.8"' in response.text
     assert response.headers["x-frame-options"] == "DENY"
     assert "default-src 'none'" in response.headers["content-security-policy"]
     assert "Eligible servers" not in response.text
@@ -92,7 +110,84 @@ async def test_homepage_renders_state_and_security_headers() -> None:
     assert response.text.count('data-filter="names"') == 1
     assert response.text.count('data-state="implied"') == 3
     assert response.text.count('data-state="selected"') == 1
-    assert "1 of 2 Gbps utilized" in response.text
+    assert "86% of 2 Gbps utilized" in response.text
+    assert "<dt>Region</dt><dd>Colorado</dd>" in response.text
+    assert "<dt>Country</dt><dd>United States</dd>" in response.text
+    assert "<dt>City</dt><dd>Denver</dd>" in response.text
+    assert "<dt>Organization</dt><dd>TZULO</dd>" in response.text
+    assert (
+        "https://www.google.com/maps/search/?api=1&amp;query=39.750099%2C-104.995697"
+        in response.text
+    )
+    assert 'target="_blank"' in response.text
+    assert 'rel="noopener noreferrer"' in response.text
+    assert response.text.count(">Refresh</button>") == 1
+    assert "Check public IP" not in response.text
+
+
+@pytest.mark.anyio
+async def test_homepage_omits_missing_public_ip_metadata() -> None:
+    async with browser_for(public_ip_document={"public_ip": "203.0.113.8"}) as (
+        browser,
+        _,
+    ):
+        response = await browser.get("/")
+
+    assert '<dl class="public-ip-metadata">' not in response.text
+    assert "<dt>Region</dt>" not in response.text
+    assert "<dt>Country</dt>" not in response.text
+    assert "<dt>City</dt>" not in response.text
+    assert "<dt>Organization</dt>" not in response.text
+    assert "<dt>Location</dt>" not in response.text
+
+
+@pytest.mark.anyio
+async def test_homepage_does_not_link_an_unchecked_public_ip() -> None:
+    async with browser_for(gluetun_status=500) as (browser, _):
+        response = await browser.get("/")
+
+    assert '<strong class="status-value">Not checked</strong>' in response.text
+    assert "https://ifconfig.co/" not in response.text
+
+
+@pytest.mark.anyio
+async def test_refresh_forces_a_catalog_request() -> None:
+    async with browser_for() as (browser, requests):
+        await browser.get("/")
+        await browser.get("/?refresh=1")
+
+    catalog_requests = [
+        request for request in requests if request.url.host == "airvpn.test"
+    ]
+    assert len(catalog_requests) == 2
+
+
+@pytest.mark.anyio
+async def test_post_selection_check_waits_for_a_new_public_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old: dict[str, object] = {"public_ip": "203.0.113.8"}
+    new: dict[str, object] = {"public_ip": "198.51.100.4"}
+    delays: list[float] = []
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(services.asyncio, "sleep", record_delay)
+    async with browser_for(public_ip_documents=[old, old, old, new]) as (
+        browser,
+        requests,
+    ):
+        await browser.get("/")
+        await browser.put("/api/selection", json={"countries": ["Canada"]})
+        response = await browser.post("/api/connectivity-test?after_selection=1")
+
+    public_ip_requests = [
+        request for request in requests if request.url.path == "/v1/publicip/ip"
+    ]
+    assert response.json()["ip"] == "198.51.100.4"
+    assert len(public_ip_requests) == 4
+    assert delays == [1, 1]
 
 
 @pytest.mark.anyio
@@ -213,15 +308,15 @@ async def test_stale_filters_leave_an_editable_draft() -> None:
 @pytest.mark.parametrize(
     ("bandwidth", "maximum", "expected"),
     [
-        (1250, 2000, "1 of 2 Gbps"),
-        (1999, 2000, "1 of 2 Gbps"),
-        (999, 2000, "0 of 2 Gbps"),
-        (12.99, 100, "12 of 100 Mbps"),
-        (1_999_999, 2_500_000, "1 of 2.5 Tbps"),
-        (0, 0, "0 of 0 Mbps"),
+        (1250, 2000, "63% of 2 Gbps"),
+        (1999, 2000, "100% of 2 Gbps"),
+        (999, 2000, "50% of 2 Gbps"),
+        (12.99, 100, "13% of 100 Mbps"),
+        (1_999_999, 2_500_000, "80% of 2.5 Tbps"),
+        (0, 0, "0% of 0 Mbps"),
     ],
 )
-def test_bandwidth_usage_floors_current_value_in_the_display_unit(
+def test_bandwidth_usage_includes_percentage_and_capacity(
     bandwidth: float, maximum: float, expected: str
 ) -> None:
     assert _format_bandwidth_usage(bandwidth, maximum) == expected

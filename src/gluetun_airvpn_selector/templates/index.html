@@ -29,13 +29,15 @@
   <section class="panel public-ip-card" aria-label="Public IP">
     <div class="public-ip-primary">
       <span class="status-label">Public IP</span>
-      <strong class="status-value">{{ connectivity.ip if connectivity else "Not checked" }}</strong>
+      <strong class="status-value">{% if connectivity %}<a href="https://ifconfig.co/?ip={{ connectivity.ip }}"
+          target="_blank" rel="noopener noreferrer">{{ connectivity.ip }}</a>{% else %}Not checked{% endif %}</strong>
       <small>
         {% if connectivity %}{{ connectivity.duration_ms }}ms at {{ connectivity.observed_at }} · {{
         connectivity.source_url }}{% endif %}
       </small>
     </div>
-    {% if connectivity %}
+    {% if connectivity and (connectivity.region or connectivity.country or connectivity.city or
+    connectivity.organization or connectivity.maps_url) %}
     <dl class="public-ip-metadata">
       {% for label, value in (("Region", connectivity.region), ("Country", connectivity.country), ("City",
       connectivity.city), ("Organization", connectivity.organization)) %}
@@ -127,7 +129,7 @@
           </span>
           <progress class="utilization utilization-{{ option.utilization|utilization_color }}" max="100"
             value="{{ option.utilization }}"
-            aria-label="{{ option.utilization|round|int }}% bandwidth utilization"></progress>
+            aria-label="{{ option.utilization|percentage }}% bandwidth utilization"></progress>
         </label>
         {% endfor %}
       </div>
