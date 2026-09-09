@@ -143,7 +143,10 @@ async def test_homepage_omits_missing_public_ip_metadata() -> None:
 
 @pytest.mark.anyio
 async def test_homepage_does_not_link_an_unchecked_public_ip() -> None:
-    async with browser_for(gluetun_status=500) as (browser, _):
+    async with browser_for(public_ip_document={"public_ip": "invalid"}) as (
+        browser,
+        _,
+    ):
         response = await browser.get("/")
 
     assert '<strong class="status-value">Not checked</strong>' in response.text
