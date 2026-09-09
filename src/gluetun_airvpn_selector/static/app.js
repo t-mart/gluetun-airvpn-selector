@@ -1,7 +1,6 @@
 import Fuse from "https://cdn.jsdelivr.net/npm/fuse.js@7.5.0/dist/fuse.min.mjs";
 
-const fields = ["names", "countries", "cities", "regions"];
-const attributes = { names: "name", countries: "country", cities: "city", regions: "region" };
+import { facets, matchingRows, pruneSelection, sameSelection, toggleSelection } from "./selection.js";
 
 function initialize(root = document) {
   const dashboard = root.matches?.("#dashboard") ? root : root.querySelector?.("#dashboard");
@@ -9,147 +8,152 @@ function initialize(root = document) {
   dashboard.dataset.enhanced = "true";
 
   const inputs = [...dashboard.querySelectorAll("input[data-filter]")];
-  const confirmedSelection = selectedValues(inputs);
-  const serverCards = [...dashboard.querySelectorAll("[data-filter-section='names'] .option-card[data-name]")];
-  const allServers = serverCards.map(serverFromElement);
-
-  inputs.forEach((input) => input.addEventListener("change", () => {
-    if (input.dataset.filter === "names") {
-      inputs.filter((item) => item.dataset.filter !== "names").forEach((item) => { item.checked = false; });
-    } else {
-      inputs.filter((item) => item.dataset.filter === "names").forEach((item) => { item.checked = false; });
-    }
-    updatePreview(dashboard, inputs, allServers);
-  }));
-  dashboard.querySelector("#selected-servers")?.addEventListener("click", (event) => {
-    const card = event.target.closest("[data-server]");
-    if (!card) return;
-    const currentMatches = matchingServers(selectedValues(inputs), allServers);
-    if (currentMatches.length <= 1) {
-      const error = dashboard.querySelector("#selection-error");
-      showError(error, "At least one eligible server is required.");
-      error.dataset.preview = "true";
-      return;
-    }
-    inputs.filter((input) => input.dataset.filter !== "names").forEach((input) => { input.checked = false; });
-    const names = inputs.filter((input) => input.dataset.filter === "names");
-    if (!names.some((input) => input.checked)) {
-      const remaining = new Set(currentMatches.filter((server) => server.name !== card.dataset.name).map((server) => server.name));
-      names.forEach((input) => { input.checked = remaining.has(input.value); });
-    } else {
-      const selected = names.find((input) => input.value === card.dataset.name);
-      if (selected) selected.checked = false;
-    }
-    updatePreview(dashboard, inputs, allServers);
-  });
-
-  const search = dashboard.querySelector("#filter-search");
-  if (search) setupSearch(search, dashboard);
-
-  dashboard.querySelector("#save-selection")?.addEventListener("click", () => saveSelection(dashboard, inputs, confirmedSelection, allServers));
-  dashboard.querySelector("#connectivity-test")?.addEventListener("click", () => checkPublicIp(dashboard));
-  updatePreview(dashboard, inputs, allServers);
-}
-
-function serverFromElement(element) {
-  return {
-    name: element.dataset.name,
-    country: element.dataset.country,
-    city: element.dataset.city,
-    region: element.dataset.region,
-    bandwidth: element.dataset.bandwidth,
-    bandwidthMax: element.dataset.bandwidthMax,
-    users: element.dataset.users,
-    load: element.dataset.load,
-    flag: element.dataset.flag,
+  const rows = JSON.parse(dashboard.dataset.rows);
+  const confirmed = JSON.parse(dashboard.dataset.selection);
+  const draft = pruneSelection(rows, confirmed);
+  const context = {
+    dashboard,
+    inputs,
+    rows,
+    confirmed,
+    selection: draft.selection,
+    saving: false,
+    search: setupSearch(dashboard.querySelector("#filter-search"), dashboard),
   };
-}
 
-function selectedValues(inputs) {
-  return Object.fromEntries(fields.map((field) => [
-    field,
-    inputs.filter((input) => input.dataset.filter === field && input.checked).map((input) => input.value),
-  ]));
-}
-
-function updatePreview(dashboard, inputs, servers) {
-  const selection = selectedValues(inputs);
-  const matches = matchingServers(selection, servers);
-
-  dashboard.querySelector("#eligible-count").textContent = matches.length;
-  renderSelectedServers(dashboard.querySelector("#selected-servers"), matches);
-  const save = dashboard.querySelector("#save-selection");
-  save.disabled = dashboard.dataset.canChange !== "true" || matches.length === 0;
-  const error = dashboard.querySelector("#selection-error");
-  if (matches.length === 0) {
-    showError(error, "The selected filters match no healthy AirVPN servers.");
-    error.dataset.preview = "true";
-  } else if (error.dataset.preview === "true") {
-    hideError(error);
-  }
-}
-
-function matchingServers(selection, servers) {
-  return servers.filter((server) => fields.every((field) => {
-    const values = selection[field].map((value) => value.toLocaleLowerCase());
-    return values.length === 0 || values.includes(server[attributes[field]].toLocaleLowerCase());
-  }));
-}
-
-function renderSelectedServers(container, servers) {
-  container.replaceChildren();
-  if (servers.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    empty.textContent = "No server matches the selected filters.";
-    container.append(empty);
-    return;
-  }
-  servers.forEach((server) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "server-card";
-    card.dataset.server = "";
-    card.dataset.name = server.name;
-    card.setAttribute("aria-label", `Exclude ${server.name} from the selection`);
-    const title = document.createElement("div");
-    title.className = "server-title";
-    const flag = document.createElement("span");
-    flag.className = "flag";
-    flag.textContent = server.flag;
-    const name = document.createElement("strong");
-    name.textContent = server.name;
-    const location = document.createElement("span");
-    location.textContent = [server.city, server.country].filter(Boolean).join(", ");
-    const metrics = document.createElement("small");
-    metrics.textContent = `${Math.round(server.bandwidth)} / ${Math.round(server.bandwidthMax)} Mbps · ${Math.round(server.users)} users · ${Math.round(server.load)}% load`;
-    title.append(flag, name);
-    card.append(title, location, metrics);
-    container.append(card);
+  inputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      const result = toggleSelection(rows, context.selection, input.dataset.filter, input.value);
+      context.selection = result.selection;
+      announceRemoval(dashboard, result.removed);
+      updatePreview(context);
+    });
+    const describe = () => describeToggle(context, input);
+    input.closest(".option-card").addEventListener("mouseenter", describe);
+    input.addEventListener("focus", describe);
   });
+
+  dashboard.querySelector("#save-selection").addEventListener("click", () => saveSelection(context));
+  announceRemoval(dashboard, draft.removed);
+  updatePreview(context);
+}
+
+function updatePreview(context) {
+  const { dashboard, inputs, rows, selection, confirmed, saving } = context;
+  const options = facets(rows, selection);
+  const matches = matchingRows(rows, selection);
+  const canChange = dashboard.dataset.canChange === "true" && !saving;
+
+  dashboard.querySelector("#match-count").textContent = `${matches.length} servers match`;
+  dashboard.querySelector("#save-selection").disabled = !canChange || matches.length === 0 || sameSelection(selection, confirmed);
+  for (const input of inputs) {
+    const option = options[input.dataset.filter].get(input.value.toLowerCase());
+    const card = input.closest(".option-card");
+    const state = option?.state ?? "unavailable";
+    card.dataset.state = state;
+    card.removeAttribute("title");
+    input.removeAttribute("aria-description");
+    input.checked = state === "selected" || state === "implied";
+    input.disabled = !canChange || state === "unavailable" || state === "implied";
+    card.querySelector(".option-state").textContent = state === "selected" ? "Selected" : state === "implied" ? "Implied" : "";
+    if (!option) continue;
+    const count = card.querySelector(".option-count");
+    count.textContent = option.count;
+    count.setAttribute("aria-label", `${option.count} servers`);
+    card.querySelector(".option-metrics").textContent = `${formatBandwidthUsage(option.bandwidth, option.bandwidthMax)} utilized · ${formatUsers(option.users)} users`;
+    const utilization = bandwidthUtilization(option.bandwidth, option.bandwidthMax);
+    const progress = card.querySelector("progress");
+    progress.value = utilization;
+    progress.className = `utilization utilization-${utilizationColor(utilization)}`;
+    progress.setAttribute("aria-label", `${Math.round(utilization)}% bandwidth utilization`);
+  }
+  for (const section of dashboard.querySelectorAll("[data-filter-section]")) {
+    section.querySelector("[data-option-count]").textContent = `${options[section.dataset.filterSection].size} options`;
+  }
+  context.search();
+}
+
+function removalList(removed) {
+  return removed.map(({ field, value }) => `${value} (${field})`).join(", ");
+}
+
+function announceRemoval(dashboard, removed) {
+  const notice = dashboard.querySelector("#selection-notice");
+  notice.textContent = removed.length ? `Deselected: ${removalList(removed)}.` : "";
+  notice.hidden = removed.length === 0;
+}
+
+function describeToggle(context, input) {
+  const card = input.closest(".option-card");
+  let description;
+  if (card.dataset.state === "implied") {
+    description = `${input.value} follows from the other filters.`;
+  } else {
+    const result = toggleSelection(context.rows, context.selection, input.dataset.filter, input.value);
+    description = `${input.checked ? "Deselect" : "Select"} ${input.value}.`;
+    if (result.removed.length) description += ` This also deselects ${removalList(result.removed)}.`;
+  }
+  card.title = description;
+  input.setAttribute("aria-description", description);
+}
+
+function bandwidthUtilization(bandwidth, bandwidthMax) {
+  const maximum = Number(bandwidthMax);
+  if (maximum <= 0) return 0;
+  return Math.min(100, Math.max(0, Number(bandwidth) / maximum * 100));
+}
+
+function utilizationColor(value) {
+  if (value >= 95) return "red";
+  if (value >= 75) return "yellow";
+  return "green";
+}
+
+function formatUsers(value) {
+  return Math.round(Number(value)).toLocaleString("en-US");
+}
+
+function formatBandwidthUsage(bandwidth, bandwidthMax) {
+  const maximum = Number(bandwidthMax);
+  const [scale, unit] = bandwidthUnit(maximum);
+  const percentage = Math.round(bandwidthUtilization(bandwidth, bandwidthMax));
+  return `${percentage}% of ${formatDecimal(maximum / scale)} ${unit}`;
+}
+
+function bandwidthUnit(mbps) {
+  if (mbps >= 1_000_000) return [1_000_000, "Tbps"];
+  if (mbps >= 1_000) return [1_000, "Gbps"];
+  return [1, "Mbps"];
+}
+
+function formatDecimal(value) {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 function setupSearch(input, dashboard) {
   const cards = [...dashboard.querySelectorAll(".option-card")];
   const records = cards.map((element) => ({ element, text: element.dataset.search }));
   const fuse = new Fuse(records, { keys: ["text"], threshold: 0.35, ignoreLocation: true });
-  input.addEventListener("input", () => {
+  const update = () => {
     const query = input.value.trim();
     const matches = query ? new Set(fuse.search(query).map((result) => result.item.element)) : new Set(cards);
-    cards.forEach((card) => { card.hidden = !matches.has(card); });
-  });
+    cards.forEach((card) => { card.hidden = card.dataset.state === "unavailable" || !matches.has(card); });
+  };
+  input.addEventListener("input", update);
+  return update;
 }
 
-async function saveSelection(dashboard, inputs, confirmedSelection, servers) {
-  const button = dashboard.querySelector("#save-selection");
+async function saveSelection(context) {
+  const { dashboard, selection } = context;
   const error = dashboard.querySelector("#selection-error");
-  button.disabled = true;
+  context.saving = true;
+  updatePreview(context);
   hideError(error);
   try {
     const response = await fetch("/api/selection", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(selectedValues(inputs)),
+      body: JSON.stringify(selection),
     });
     const result = await response.json();
     if (response.status === 401) {
@@ -157,52 +161,31 @@ async function saveSelection(dashboard, inputs, confirmedSelection, servers) {
       return;
     }
     if (!response.ok) throw new Error(result.error?.message || "The selection update failed.");
-    await refreshDashboard(true);
-    await checkPublicIp(document.querySelector("#dashboard"), true);
-  } catch (requestError) {
-    inputs.forEach((input) => {
-      input.checked = confirmedSelection[input.dataset.filter].includes(input.value);
-    });
-    updatePreview(dashboard, inputs, servers);
-    showError(error, requestError.message);
-  }
-}
-
-async function checkPublicIp(dashboard, afterSelection = false) {
-  const button = dashboard.querySelector("#connectivity-test");
-  const card = button.closest(".public-ip-card");
-  const detail = dashboard.querySelector("#public-ip-detail");
-  const error = dashboard.querySelector("#selection-error");
-  const previousDetail = detail.textContent;
-  const previousLabel = button.textContent;
-  let complete = false;
-  button.disabled = true;
-  button.textContent = "Please wait";
-  card.classList.add("is-loading");
-  card.setAttribute("aria-busy", "true");
-  detail.textContent = "The public IP check is in progress.";
-  hideError(error);
-  try {
-    const path = afterSelection ? "/api/connectivity-test?after_selection=1" : "/api/connectivity-test";
-    const response = await fetch(path, { method: "POST" });
-    const result = await response.json();
-    if (response.status === 401) {
-      window.location.assign("/login");
-      return;
+    let publicIpError = "";
+    try {
+      await requestPublicIp(true);
+    } catch (requestError) {
+      publicIpError = requestError.message;
     }
-    if (!response.ok) throw new Error(result.error?.message || "The public IP check failed.");
-    dashboard.querySelector("#public-ip").textContent = result.ip;
-    detail.textContent = `${result.duration_ms}ms at ${result.observed_at} · ${result.source_url}`;
-    complete = true;
+    await refreshDashboard(true);
+    if (publicIpError) showError(document.querySelector("#selection-error"), publicIpError);
   } catch (requestError) {
     showError(error, requestError.message);
   } finally {
-    if (!complete) detail.textContent = previousDetail;
-    button.disabled = false;
-    button.textContent = previousLabel;
-    card.classList.remove("is-loading");
-    card.removeAttribute("aria-busy");
+    context.saving = false;
+    updatePreview(context);
   }
+}
+
+async function requestPublicIp(afterSelection = false) {
+  const path = afterSelection ? "/api/connectivity-test?after_selection=1" : "/api/connectivity-test";
+  const response = await fetch(path, { method: "POST" });
+  const result = await response.json();
+  if (response.status === 401) {
+    window.location.assign("/login");
+    return;
+  }
+  if (!response.ok) throw new Error(result.error?.message || "The public IP check failed.");
 }
 
 function showError(element, message) {
@@ -213,7 +196,6 @@ function showError(element, message) {
 function hideError(element) {
   element.textContent = "";
   element.hidden = true;
-  delete element.dataset.preview;
 }
 
 function refreshDashboard(skipPublicIp = false) {

@@ -6,6 +6,7 @@ from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Any
 
 SELECTOR_FIELDS = ("names", "countries", "cities", "regions")
+SELECTOR_ATTRIBUTES = dict(zip(SELECTOR_FIELDS, ("name", "country", "city", "region")))
 
 
 class CatalogError(ValueError):
@@ -184,6 +185,29 @@ def eligible_servers(
 
 def _matches(value: str, choices: set[str]) -> bool:
     return not choices or value.casefold() in choices
+
+
+def prune_selection(servers: Iterable[Server], selection: Selection) -> Selection:
+    server_list = tuple(servers)
+    while True:
+        matches = eligible_servers(server_list, selection)
+        supported = {
+            field: {getattr(server, attribute).casefold() for server in matches}
+            for field, attribute in SELECTOR_ATTRIBUTES.items()
+        }
+        pruned = Selection(
+            **{
+                field: tuple(
+                    value
+                    for value in getattr(selection, field)
+                    if value.casefold() in supported[field]
+                )
+                for field in SELECTOR_FIELDS
+            }
+        )
+        if pruned == selection:
+            return pruned
+        selection = pruned
 
 
 def canonicalize_selection(

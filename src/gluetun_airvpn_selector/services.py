@@ -6,7 +6,9 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
+from math import isfinite
 from typing import Any
+from urllib.parse import quote
 
 import httpx2
 
@@ -61,14 +63,43 @@ class ConnectivityResult:
     duration_ms: int
     source_url: str
     observed_at: str
+    region: str | None = None
+    country: str | None = None
+    city: str | None = None
+    organization: str | None = None
+    location: str | None = None
+
+    @property
+    def maps_url(self) -> str | None:
+        if self.location is None:
+            return None
+        return (
+            "https://www.google.com/maps/search/?api=1&query="
+            f"{quote(self.location)}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document = {
             "ip": self.ip,
             "duration_ms": self.duration_ms,
             "source_url": self.source_url,
             "observed_at": self.observed_at,
         }
+        document.update(
+            {
+                key: value
+                for key, value in {
+                    "region": self.region,
+                    "country": self.country,
+                    "city": self.city,
+                    "organization": self.organization,
+                    "location": self.location,
+                    "maps_url": self.maps_url,
+                }.items()
+                if value is not None
+            }
+        )
+        return document
 
 
 class SessionStore:
@@ -237,6 +268,11 @@ class GluetunClient:
             duration_ms=duration_ms,
             source_url=source_url,
             observed_at=datetime.now(UTC).isoformat(),
+            region=_optional_string(document, "region"),
+            country=_optional_string(document, "country"),
+            city=_optional_string(document, "city"),
+            organization=_optional_string(document, "organization"),
+            location=_coordinates(document.get("location")),
         )
 
     async def connectivity_test_with_retry(
@@ -314,6 +350,31 @@ def configured_credentials(config: Config) -> Credentials:
 
 def credentials_match(expected: Credentials, supplied: Credentials) -> bool:
     return secrets.compare_digest(expected.api_key, supplied.api_key)
+
+
+def _optional_string(document: dict[str, Any], key: str) -> str | None:
+    value = document.get(key)
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _coordinates(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 2:
+        return None
+    try:
+        latitude, longitude = (float(part) for part in parts)
+    except ValueError:
+        return None
+    if not all(map(isfinite, (latitude, longitude))):
+        return None
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        return None
+    return ",".join(parts)
 
 
 def _selection_from_provider(provider: dict[str, Any]) -> Selection:

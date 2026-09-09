@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 
@@ -8,6 +9,7 @@ from gluetun_airvpn_selector.domain import (
     eligible_servers,
     normalize_selection,
     parse_catalog,
+    prune_selection,
 )
 
 
@@ -111,3 +113,38 @@ def test_selection_removes_case_insensitive_duplicates() -> None:
     )
 
     assert selection.names == ("Agena",)
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected"),
+    [
+        (Selection(countries=("Canada", "Japan")), Selection(countries=("Canada",))),
+        (Selection(names=("AGENA", "Missing")), Selection(names=("AGENA",))),
+        (Selection(countries=("Japan",), regions=("America",)), Selection()),
+    ],
+)
+def test_prune_removes_values_without_a_surviving_row(
+    selection: Selection, expected: Selection
+) -> None:
+    servers = parse_catalog({"servers": [api_server()]})
+    assert prune_selection(servers, selection) == expected
+    assert prune_selection(servers, expected) == expected
+
+
+def test_prune_preserves_shared_names_and_cities_across_locations() -> None:
+    original = parse_catalog({"servers": [api_server()]})[0]
+    servers = (
+        original,
+        replace(original, country="Japan", region="Asia"),
+        replace(original, name="Other", country="Canada", region="Europe"),
+    )
+    selection = Selection(
+        names=("Agena",),
+        countries=("Canada", "Japan"),
+        cities=("Toronto Ontario",),
+        regions=("America", "Asia"),
+    )
+    assert prune_selection(servers, selection) == selection
+    assert prune_selection(servers, replace(selection, regions=("Asia",))) == replace(
+        selection, countries=("Japan",), regions=("Asia",)
+    )

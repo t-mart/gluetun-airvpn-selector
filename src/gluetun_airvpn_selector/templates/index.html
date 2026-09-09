@@ -1,143 +1,138 @@
 {% extends "base.html" %}
-{% block scripts %}<script type="module" src="/static/app.js"></script>{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/app.js"></script>{% endblock %}
 {% block body %}
-  <header class="site-header">
-    <div>
-      <p class="eyebrow">Gluetun companion</p>
-      <h1>AirVPN selector</h1>
-    </div>
+<header class="site-header">
+  <div>
+    <p class="eyebrow">Gluetun companion</p>
+    <h1>AirVPN selector</h1>
+  </div>
+  <div class="site-actions">
+    <form method="get" action="/">
+      <button class="quiet" type="submit" name="refresh" value="1">Refresh</button>
+    </form>
     <form method="post" action="/logout"><button class="quiet" type="submit">Sign out</button></form>
-  </header>
+  </div>
+</header>
 
-  <main id="dashboard" data-can-change="{{ 'true' if can_change else 'false' }}">
-    <section class="status-grid" aria-label="Connection status">
-      <article class="status-card">
-        <span>VPN state</span>
-        <strong class="status-value">{{ state.vpn_status if state else "Unavailable" }}</strong>
-      </article>
-      <article class="status-card">
-        <span>Provider</span>
-        <strong class="status-value">{{ state.provider if state else "Unavailable" }}</strong>
-      </article>
-      <article class="status-card">
-        <span>Catalog age</span>
-        <strong class="status-value">{% if catalog_age is not none %}{{ catalog_age }}s{% else %}Unavailable{% endif %}</strong>
-      </article>
-      <article class="status-card public-ip-card">
-        <span>Public IP</span>
-        <strong id="public-ip" class="status-value">{{ connectivity.ip if connectivity else "Not checked" }}</strong>
-        <small id="public-ip-detail">
-          {% if connectivity %}{{ connectivity.duration_ms }}ms at {{ connectivity.observed_at }} · {{ connectivity.source_url }}{% endif %}
-        </small>
-        <button id="connectivity-test" class="quiet" type="button">Check public IP</button>
-      </article>
-    </section>
+<main id="dashboard" data-can-change="{{ 'true' if can_change else 'false' }}"
+  data-selection='{{ selection.to_dict()|tojson }}' data-rows='{{ catalog_rows|tojson }}'>
+  <section class="status-strip" aria-label="Connection status">
+    <span><span class="status-label">VPN state</span><strong>{{ state.vpn_status if state else "Unavailable"
+        }}</strong></span>
+    <span><span class="status-label">Provider</span><strong>{{ state.provider if state else "Unavailable"
+        }}</strong></span>
+    <span><span class="status-label">Catalog age</span><strong>{% if catalog_age is not none %}{{ catalog_age }}s{% else
+        %}Unavailable{% endif %}</strong></span>
+  </section>
 
-    {% if state_error %}<p class="alert alert-error" role="alert">{{ state_error }} Changes are disabled.</p>{% endif %}
-    {% if connectivity_error %}<p class="alert alert-warning" role="status">{{ connectivity_error }}{% if connectivity %} The last public IP result remains available.{% endif %}</p>{% endif %}
-    {% if catalog_error %}<p class="alert alert-warning" role="status">{{ catalog_error }}{% if servers %} The last valid catalog remains available.{% endif %}</p>{% endif %}
-    {% if state and state.provider|lower != "airvpn" %}<p class="alert alert-error" role="alert">Gluetun uses {{ state.provider }}. Changes are disabled.</p>{% endif %}
-    <p id="selection-error" class="alert alert-error" role="alert" hidden></p>
-
-    <section class="panel eligible-panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Current result</p>
-          <h2>Eligible servers</h2>
-        </div>
-        <strong id="eligible-count" class="count">{{ eligible|length }}</strong>
-      </div>
-      {% if eligible|length == 1 %}<p class="sole-note">This is the sole eligible server. This status does not identify the active connection.</p>{% endif %}
-      <div id="selected-servers" class="card-grid selected-grid">
-        {% for server in eligible %}
-          {% include "server_card.html" %}
-        {% else %}
-          <p class="empty-state">No server matches the configured filters.</p>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="panel configured-panel">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Live Gluetun state</p>
-          <h2>Configured filters</h2>
-        </div>
-        <button
-          class="quiet"
-          type="button"
-          hx-get="/?refresh=1"
-          hx-select="#dashboard"
-          hx-target="#dashboard"
-          hx-swap="outerHTML"
-        >Refresh</button>
-      </div>
-      <dl class="filter-summary">
-        {% for field in ("names", "countries", "cities", "regions") %}
-          <div><dt>{{ field|capitalize }}</dt><dd>{{ selection[field]|join(", ") if selection[field] else "Any" }}</dd></div>
-        {% endfor %}
-      </dl>
-    </section>
-
-    <section class="editor">
-      <div class="editor-heading">
-        <div>
-          <p class="eyebrow">Selection editor</p>
-          <h2>Choose AirVPN servers</h2>
-          <p>Values within one section use OR. Values across hierarchy sections use AND.</p>
-          <p>Select a server name to clear the hierarchy filters.</p>
-        </div>
-        <div class="editor-actions">
-          <label class="search-label" for="filter-search">Search</label>
-          <input id="filter-search" type="search" placeholder="Country, city, or server">
-          <button id="save-selection" class="primary" type="button" {% if not can_change %}disabled{% endif %}>Apply filters</button>
-        </div>
-      </div>
-
-      {% for field, label in (("countries", "SERVER_COUNTRIES"), ("regions", "SERVER_REGIONS"), ("cities", "SERVER_CITIES"), ("names", "SERVER_NAMES")) %}
-        <section class="filter-section" data-filter-section="{{ field }}">
-          <div class="filter-section-heading">
-            <h3>{{ label }}</h3>
-            <span>{{ options[field]|length }} options</span>
-          </div>
-          <div class="card-grid option-grid">
-            {% for option in options[field] %}
-              <label
-                class="option-card{% if option.stale %} stale{% endif %}"
-                data-search="{{ option.value }} {{ field }}"
-                {% if option.server %}
-                  data-name="{{ option.server.name }}"
-                  data-country="{{ option.server.country }}"
-                  data-city="{{ option.server.city }}"
-                  data-region="{{ option.server.region }}"
-                  data-bandwidth="{{ option.server.bandwidth }}"
-                  data-bandwidth-max="{{ option.server.bandwidth_max }}"
-                  data-users="{{ option.server.users }}"
-                  data-load="{{ option.server.load }}"
-                  data-flag="{{ option.server.flag }}"
-                {% endif %}
-              >
-                <input
-                  type="checkbox"
-                  data-filter="{{ field }}"
-                  value="{{ option.value }}"
-                  {% if option.selected %}checked{% endif %}
-                  {% if not can_change %}disabled{% endif %}
-                >
-                <span class="checkmark" aria-hidden="true"></span>
-                <span class="option-copy">
-                  <strong>{% if option.flag %}<span class="flag" title="{{ option.country_code|upper }}">{{ option.flag }}</span>{% endif %}{{ option.value }}</strong>
-                  {% if option.stale %}
-                    <small>Unavailable in the current catalog</small>
-                  {% else %}
-                    <small>{{ option.server_count }} server{% if option.server_count != 1 %}s{% endif %} · {{ option.bandwidth|round|int }} / {{ option.bandwidth_max|round|int }} Mbps · {{ option.users|round|int }} users</small>
-                  {% endif %}
-                </span>
-              </label>
-            {% endfor %}
-          </div>
-        </section>
+  <section class="panel public-ip-card" aria-label="Public IP">
+    <div class="public-ip-primary">
+      <span class="status-label">Public IP</span>
+      <strong class="status-value">{{ connectivity.ip if connectivity else "Not checked" }}</strong>
+      <small>
+        {% if connectivity %}{{ connectivity.duration_ms }}ms at {{ connectivity.observed_at }} · {{
+        connectivity.source_url }}{% endif %}
+      </small>
+    </div>
+    {% if connectivity %}
+    <dl class="public-ip-metadata">
+      {% for label, value in (("Region", connectivity.region), ("Country", connectivity.country), ("City",
+      connectivity.city), ("Organization", connectivity.organization)) %}
+      {% if value %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endif %}
       {% endfor %}
+      {% if connectivity.maps_url %}
+      <div><dt>Location</dt><dd><a href="{{ connectivity.maps_url }}" target="_blank"
+            rel="noopener noreferrer">Google Maps</a></dd></div>
+      {% endif %}
+    </dl>
+    {% endif %}
+  </section>
+
+  {% if state_error %}<p class="alert alert-error" role="alert">{{ state_error }} Changes are disabled.</p>{% endif %}
+  {% if connectivity_error %}<p class="alert alert-warning" role="status">{{ connectivity_error }}{% if connectivity %}
+    The last public IP result remains available.{% endif %}</p>{% endif %}
+  {% if catalog_error %}<p class="alert alert-warning" role="status">{{ catalog_error }}{% if servers %} The last valid
+    catalog remains available.{% endif %}</p>{% endif %}
+  {% if state and state.provider|lower != "airvpn" %}<p class="alert alert-error" role="alert">Gluetun uses {{
+    state.provider }}. Changes are disabled.</p>{% endif %}
+  <p id="selection-error" class="alert alert-error" role="alert" hidden></p>
+
+  <section class="panel configured-panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Live Gluetun state</p>
+        <h2>Configured filters</h2>
+      </div>
+    </div>
+    <dl class="filter-summary">
+      {% for field in ("names", "countries", "cities", "regions") %}
+      <div>
+        <dt>{{ field|capitalize }}</dt>
+        <dd>{{ selection[field]|join(", ") if selection[field] else "Any" }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+
+  <section class="editor">
+    <div class="section-heading available-heading">
+      <div>
+        <p class="eyebrow">AirVPN catalog</p>
+        <h2>Available servers</h2>
+      </div>
+      <div class="selection-actions">
+        <span id="match-count" class="count" role="status">{{ match_count }} servers match</span>
+        <button id="save-selection" class="primary" type="button" disabled>Apply servers</button>
+      </div>
+    </div>
+    <div class="editor-toolbar">
+      <div class="selection-help">
+        <p>Values within a section use OR. The four sections use AND.</p>
+        <p>Implied values follow from your filters. Each count excludes its own section's filter.</p>
+      </div>
+      <div class="editor-search">
+        <label class="search-label" for="filter-search">Search</label>
+        <input id="filter-search" type="search" placeholder="Region, country, city, or server">
+      </div>
+    </div>
+    <p id="selection-notice" class="alert alert-warning" role="status" aria-live="polite"
+      {% if not selection_notice %}hidden{% endif %}>{{ selection_notice }}</p>
+    {% if not servers %}<p class="empty-state">No healthy AirVPN servers are available.</p>{% endif %}
+
+    {% for field, label in (("regions", "Regions"), ("countries", "Countries"), ("cities", "Cities"), ("names", "Server
+    Names")) %}
+    <section class="filter-section" data-filter-section="{{ field }}">
+      <div class="filter-section-heading">
+        <h3>{{ label }}</h3>
+        <span data-option-count>{{ options[field]|selectattr("available")|list|length }} options</span>
+      </div>
+      <div class="card-grid option-grid">
+        {% for option in options[field] %}
+        <label class="option-card" data-state="{{ 'selected' if option.selected else 'implied' if option.implied else 'available' if option.available else 'unavailable' }}"
+          data-search="{{ option.value }} {{ option.location }} {{ field }}" {% if not option.available %}hidden{% endif %}>
+          <input type="checkbox" data-filter="{{ field }}" value="{{ option.value }}"
+            {% if option.selected or option.implied %}checked{% endif %}
+            {% if not can_change or not option.available or option.implied %}disabled{% endif %}>
+          <span class="checkmark" aria-hidden="true"></span>
+          <span class="option-copy">
+            <strong>{% if option.flag %}<span class="flag" title="{{ option.country_code|upper }}">{{ option.flag
+                }}</span>{% endif %}{{ option.value }}</strong>
+            {% if option.location %}<span class="option-location">{{ option.location }}</span>{% endif %}
+            <span class="option-details">
+              <span class="option-count" aria-label="{{ option.server_count }} servers">{{ option.server_count }}</span>
+              <span class="option-state">{{ 'Selected' if option.selected else 'Implied' if option.implied else '' }}</span>
+            </span>
+            <small class="option-metrics">{{ option.bandwidth|bandwidth_usage(option.bandwidth_max) }} utilized · {{ option.users|users }} users</small>
+          </span>
+          <progress class="utilization utilization-{{ option.utilization|utilization_color }}" max="100"
+            value="{{ option.utilization }}"
+            aria-label="{{ option.utilization|round|int }}% bandwidth utilization"></progress>
+        </label>
+        {% endfor %}
+      </div>
     </section>
-  </main>
+    {% endfor %}
+  </section>
+</main>
 {% endblock %}

@@ -41,6 +41,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run ty check
 uv run pytest
+node --test tests/test_selection.mjs
 ```
 
 Set `RUN_LIVE_AIRVPN_TEST=1` to enable the optional AirVPN contract test.

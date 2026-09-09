@@ -8,3 +8,4 @@ wheels/
 .cache/
 .pytest_cache/
 .ruff_cache/
+compose.yml

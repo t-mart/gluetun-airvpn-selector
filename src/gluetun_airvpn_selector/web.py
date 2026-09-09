@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -18,11 +19,14 @@ from starlette.staticfiles import StaticFiles
 
 from .config import Config
 from .domain import (
+    SELECTOR_ATTRIBUTES,
+    SELECTOR_FIELDS,
     Selection,
     SelectionError,
     canonicalize_selection,
     eligible_servers,
     normalize_selection,
+    prune_selection,
 )
 from .services import (
     PUBLIC_IP_RETRY_SECONDS,
@@ -41,9 +45,53 @@ SESSION_COOKIE = "gluetun_companion_session"
 SESSION_MAX_AGE = 14 * 24 * 60 * 60
 MAX_REQUEST_BYTES = 64 * 1024
 
+
+def _bandwidth_unit(mbps: float) -> tuple[float, str]:
+    if mbps >= 1_000_000:
+        return 1_000_000, "Tbps"
+    if mbps >= 1_000:
+        return 1_000, "Gbps"
+    return 1, "Mbps"
+
+
+def _format_bandwidth_usage(bandwidth: float, bandwidth_max: float) -> str:
+    scale, unit = _bandwidth_unit(bandwidth_max)
+    percentage = round(_utilization(bandwidth, bandwidth_max))
+    maximum = _format_decimal(bandwidth_max / scale)
+    return f"{percentage}% of {maximum} {unit}"
+
+
+def _format_decimal(value: float) -> str:
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
+def _format_users(value: float) -> str:
+    return f"{round(value):,}"
+
+
+def _utilization(bandwidth: float, bandwidth_max: float) -> float:
+    if bandwidth_max <= 0:
+        return 0.0
+    return min(100.0, max(0.0, bandwidth / bandwidth_max * 100))
+
+
+def _utilization_color(value: float) -> str:
+    if value >= 95:
+        return "red"
+    if value >= 75:
+        return "yellow"
+    return "green"
+
+
 templates = Environment(
     loader=FileSystemLoader(PACKAGE_DIR / "templates"),
     autoescape=select_autoescape(("html", "xml")),
+)
+templates.filters.update(
+    bandwidth_usage=_format_bandwidth_usage,
+    users=_format_users,
+    utilization=_utilization,
+    utilization_color=_utilization_color,
 )
 
 
@@ -251,6 +299,12 @@ async def api_selection(request: Request) -> Response:
                 "The selected filters match no healthy AirVPN servers.",
                 400,
             )
+        if prune_selection(snapshot.servers, selection) != selection:
+            raise ServiceError(
+                "incoherent_selection",
+                "Each selected value must match at least one server in the result.",
+                400,
+            )
 
         current = await request.app.state.gluetun.get_state(credentials)
         if current.provider.casefold() != "airvpn":
@@ -299,17 +353,36 @@ def _page_context(
     connectivity_error: ServiceError | None,
 ) -> dict[str, Any]:
     servers = snapshot.servers if snapshot else ()
-    selection = state.selection if state else _empty_selection()
-    eligible = eligible_servers(servers, selection) if state else ()
-    can_change = bool(
-        state and snapshot and state.provider.casefold() == "airvpn" and eligible
+    selection = canonicalize_selection(
+        state.selection if state else _empty_selection(), servers
     )
+    editor_selection = prune_selection(servers, selection)
+    removed = [
+        f"{value} ({field})"
+        for field in SELECTOR_FIELDS
+        for value in getattr(selection, field)
+        if value not in getattr(editor_selection, field)
+    ]
+    can_change = bool(state and state.provider.casefold() == "airvpn" and servers)
     return {
         "state": state,
         "selection": selection,
         "servers": servers,
-        "eligible": eligible,
-        "options": _options(servers, selection),
+        "match_count": len(eligible_servers(servers, editor_selection)),
+        "selection_notice": f"Deselected: {', '.join(removed)}." if removed else "",
+        "catalog_rows": [
+            {
+                **{
+                    attribute: getattr(server, attribute)
+                    for attribute in SELECTOR_ATTRIBUTES.values()
+                },
+                "bandwidth": server.bandwidth,
+                "bandwidthMax": server.bandwidth_max,
+                "users": server.users,
+            }
+            for server in servers
+        ],
+        "options": _options(servers, editor_selection),
         "catalog_age": snapshot.age_seconds if snapshot else None,
         "catalog_error": snapshot.error if snapshot else _message(catalog_error),
         "state_error": _message(state_error),
@@ -338,14 +411,10 @@ def _state_document(state: GluetunState, snapshot: Any) -> dict[str, Any]:
 def _options(
     servers: tuple[Any, ...], selection: Any
 ) -> dict[str, list[dict[str, Any]]]:
-    attributes = {
-        "countries": "country",
-        "regions": "region",
-        "cities": "city",
-        "names": "name",
-    }
     result: dict[str, list[dict[str, Any]]] = {}
-    for field, attribute in attributes.items():
+    for field, attribute in SELECTOR_ATTRIBUTES.items():
+        others = set(eligible_servers(servers, replace(selection, **{field: ()})))
+        candidates = {getattr(server, attribute).casefold() for server in others}
         grouped: dict[str, dict[str, Any]] = {}
         for server in servers:
             value = getattr(server, attribute)
@@ -358,37 +427,49 @@ def _options(
                     "bandwidth_max": 0.0,
                     "users": 0,
                     "server_count": 0,
-                    "flag": server.flag if field == "countries" else "",
-                    "country_code": server.country_code if field == "countries" else "",
-                    "stale": False,
-                    "server": server if field == "names" else None,
-                },
-            )
-            option["bandwidth"] += server.bandwidth
-            option["bandwidth_max"] += server.bandwidth_max
-            option["users"] += server.users
-            option["server_count"] += 1
-
-        selected = {value.casefold(): value for value in getattr(selection, field)}
-        for key, value in selected.items():
-            if key not in grouped:
-                grouped[key] = {
-                    "value": value,
-                    "bandwidth": 0.0,
-                    "bandwidth_max": 0.0,
-                    "users": 0,
-                    "server_count": 0,
                     "flag": "",
                     "country_code": "",
-                    "stale": True,
-                    "server": None,
-                }
+                    "locations": set(),
+                    "country_flags": set(),
+                },
+            )
+            if server in others:
+                option["bandwidth"] += server.bandwidth
+                option["bandwidth_max"] += server.bandwidth_max
+                option["users"] += server.users
+                option["server_count"] += 1
+            option["country_flags"].add((server.country_code, server.flag))
+            location = _option_location(field, server)
+            if location:
+                option["locations"].add(location)
+
+        selected = {value.casefold(): value for value in getattr(selection, field)}
         for key, option in grouped.items():
             option["selected"] = key in selected
+            option["available"] = key in candidates
+            option["implied"] = not selected and candidates == {key}
+            option["location"] = " / ".join(
+                sorted(option.pop("locations"), key=str.casefold)
+            )
+            country_flags = option.pop("country_flags")
+            if field != "regions" and len(country_flags) == 1:
+                option["country_code"], option["flag"] = next(iter(country_flags))
+            option["utilization"] = _utilization(
+                option["bandwidth"], option["bandwidth_max"]
+            )
         result[field] = sorted(
             grouped.values(), key=lambda option: option["value"].casefold()
         )
     return result
+
+
+def _option_location(field: str, server: Any) -> str:
+    parts = {
+        "countries": (server.region,),
+        "cities": (server.country, server.region),
+        "names": (server.city, server.country, server.region),
+    }.get(field, ())
+    return ", ".join(filter(None, parts))
 
 
 def _request_credentials(request: Request) -> Credentials | None:
