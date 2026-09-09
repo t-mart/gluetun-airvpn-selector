@@ -12,14 +12,18 @@ from starlette.applications import Starlette
 
 from gluetun_airvpn_selector import services
 from gluetun_airvpn_selector.domain import Selection, parse_catalog
-from gluetun_airvpn_selector.web import _format_bandwidth_usage, _options, create_app
+from gluetun_airvpn_selector.web import (
+    SESSION_COOKIE,
+    _format_bandwidth_usage,
+    _options,
+    create_app,
+)
 from tests.test_domain import api_server
 from tests.test_services import config
 
 
-def test_app_requires_api_key() -> None:
-    with pytest.raises(ValueError, match="GLUETUN_API_KEY"):
-        create_app(config(gluetun_api_key=""))
+def test_app_does_not_require_an_api_key() -> None:
+    create_app(config())
 
 
 @asynccontextmanager
@@ -27,7 +31,10 @@ async def browser_for(
     *,
     api_key: str = "secret",
     gluetun_status: int = 200,
+    gluetun_requires_auth: bool = True,
+    public_ip_status: int = 200,
     authenticated: bool = True,
+    session_cookie: str | None = None,
     selection: Selection | None = None,
     servers: list[dict[str, object]] | None = None,
     public_ip_document: dict[str, object] | None = None,
@@ -46,9 +53,13 @@ async def browser_for(
             )
         if gluetun_status != 200:
             return httpx2.Response(gluetun_status)
+        if gluetun_requires_auth and request.headers.get("X-API-Key") != api_key:
+            return httpx2.Response(401)
         if request.url.path == "/v1/vpn/status":
             return httpx2.Response(200, json={"status": "running"})
         if request.url.path == "/v1/publicip/ip":
+            if public_ip_status != 200:
+                return httpx2.Response(public_ip_status)
             return httpx2.Response(
                 200,
                 json=next(public_ip_responses)
@@ -76,13 +87,15 @@ async def browser_for(
         )
 
     upstream_client = httpx2.AsyncClient(transport=httpx2.MockTransport(upstream))
-    app: Starlette = create_app(config(gluetun_api_key=api_key), upstream_client)
+    app: Starlette = create_app(config(), upstream_client)
     async with app.router.lifespan_context(app):
         transport = httpx2.ASGITransport(app=app)
         async with httpx2.AsyncClient(
             transport=transport,
             base_url="http://testserver",
         ) as browser:
+            if session_cookie is not None:
+                browser.cookies.set(SESSION_COOKIE, session_cookie)
             if authenticated:
                 response = await browser.post(
                     "/login",
@@ -92,6 +105,90 @@ async def browser_for(
                 assert response.status_code == 303
                 requests.clear()
             yield browser, requests
+
+
+@pytest.mark.anyio
+async def test_homepage_without_cookie_uses_gluetun_without_auth() -> None:
+    async with browser_for(
+        authenticated=False,
+        gluetun_requires_auth=False,
+    ) as (browser, requests):
+        response = await browser.get("/")
+
+    assert response.status_code == 200
+    gluetun_requests = [
+        request for request in requests if request.url.host == "gluetun"
+    ]
+    assert gluetun_requests
+    assert all("X-API-Key" not in request.headers for request in gluetun_requests)
+
+
+@pytest.mark.anyio
+async def test_homepage_without_cookie_redirects_when_gluetun_requires_auth() -> None:
+    async with browser_for(authenticated=False) as (browser, requests):
+        response = await browser.get("/")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    gluetun_requests = [
+        request for request in requests if request.url.host == "gluetun"
+    ]
+    assert gluetun_requests
+    assert all("X-API-Key" not in request.headers for request in gluetun_requests)
+
+
+@pytest.mark.anyio
+async def test_login_uses_gluetun_as_the_api_key_authority() -> None:
+    async with browser_for(authenticated=False) as (browser, requests):
+        rejected = await browser.post(
+            "/login",
+            content="api_key=wrong",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        accepted = await browser.post(
+            "/login",
+            content="api_key=secret",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    assert rejected.status_code == 401
+    assert "Gluetun rejected the API key." in rejected.text
+    assert SESSION_COOKIE not in rejected.cookies
+    assert accepted.status_code == 303
+    assert SESSION_COOKIE in accepted.cookies
+    assert any(request.headers.get("X-API-Key") == "wrong" for request in requests)
+    assert any(request.headers.get("X-API-Key") == "secret" for request in requests)
+
+
+@pytest.mark.anyio
+async def test_restart_invalidates_the_session_cookie() -> None:
+    async with browser_for() as (browser, _):
+        session_cookie = browser.cookies[SESSION_COOKIE]
+
+    async with browser_for(
+        authenticated=False,
+        session_cookie=session_cookie,
+    ) as (browser, requests):
+        response = await browser.get("/")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    assert SESSION_COOKIE not in response.cookies
+    gluetun_requests = [
+        request for request in requests if request.url.host == "gluetun"
+    ]
+    assert gluetun_requests
+    assert all("X-API-Key" not in request.headers for request in gluetun_requests)
+
+
+@pytest.mark.anyio
+async def test_homepage_redirects_after_any_gluetun_unauthorized_response() -> None:
+    async with browser_for(public_ip_status=401) as (browser, _):
+        response = await browser.get("/")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    assert SESSION_COOKIE not in response.cookies
 
 
 @pytest.mark.anyio
@@ -213,7 +310,10 @@ async def test_login_without_origin_uses_an_opaque_cookie() -> None:
         request for request in requests if request.url.host == "gluetun"
     ]
     assert gluetun_requests
-    assert all(request.headers["X-API-Key"] == "secret" for request in gluetun_requests)
+    api_keys = [request.headers.get("X-API-Key") for request in gluetun_requests]
+    assert api_keys.count(None) == 2
+    assert all(api_key in (None, "secret") for api_key in api_keys)
+    assert "secret" in api_keys
 
 
 @pytest.mark.anyio

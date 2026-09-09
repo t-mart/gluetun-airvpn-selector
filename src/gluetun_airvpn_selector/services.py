@@ -322,7 +322,9 @@ class GluetunClient:
             response = await self._client.request(
                 method,
                 f"{self._base_url}{path}",
-                headers={"X-API-Key": credentials.api_key},
+                headers=(
+                    {"X-API-Key": credentials.api_key} if credentials.api_key else None
+                ),
                 json=json,
                 timeout=timeout or self._timeout,
             )
@@ -357,14 +359,6 @@ class GluetunClient:
                 502,
             )
         return response
-
-
-def configured_credentials(config: Config) -> Credentials:
-    return Credentials(api_key=config.gluetun_api_key)
-
-
-def credentials_match(expected: Credentials, supplied: Credentials) -> bool:
-    return secrets.compare_digest(expected.api_key, supplied.api_key)
 
 
 def _optional_string(document: dict[str, Any], key: str) -> str | None:

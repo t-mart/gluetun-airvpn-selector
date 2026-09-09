@@ -14,7 +14,6 @@ from gluetun_airvpn_selector.services import (
     Credentials,
     GluetunClient,
     ServiceError,
-    configured_credentials,
 )
 from tests.test_domain import api_server
 
@@ -22,7 +21,6 @@ from tests.test_domain import api_server
 def config(**overrides: Any) -> Config:
     values: dict[str, Any] = {
         "gluetun_base_url": "http://gluetun:8000",
-        "gluetun_api_key": "secret",
         "airvpn_status_url": "https://airvpn.test/status",
         "airvpn_cache_seconds": 300,
         "airvpn_timeout_seconds": 5,
@@ -125,21 +123,6 @@ async def test_authentication_header() -> None:
 
     values = [request.headers.get("X-API-Key") for request in seen]
     assert values == ["secret", "secret"]
-
-
-def test_config_requires_api_key() -> None:
-    with pytest.raises(ValueError, match="GLUETUN_API_KEY"):
-        config(gluetun_api_key="").validate()
-
-
-def test_config_accepts_api_key() -> None:
-    config().validate()
-
-
-def test_configured_credentials_uses_api_key() -> None:
-    credentials = configured_credentials(config())
-
-    assert credentials == Credentials(api_key="secret")
 
 
 @pytest.mark.anyio

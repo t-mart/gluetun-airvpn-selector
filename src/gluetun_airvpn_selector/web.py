@@ -37,8 +37,6 @@ from .services import (
     GluetunState,
     ServiceError,
     SessionStore,
-    configured_credentials,
-    credentials_match,
 )
 
 PACKAGE_DIR = Path(__file__).parent
@@ -133,7 +131,6 @@ def create_app(
     client: httpx2.AsyncClient | None = None,
 ) -> Starlette:
     app_config = config or Config.from_env()
-    app_config.validate()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -168,8 +165,6 @@ def create_app(
 
 async def homepage(request: Request) -> Response:
     credentials = _request_credentials(request)
-    if credentials is None:
-        return _login_redirect(request)
 
     state: GluetunState | None = None
     state_error: ServiceError | None = None
@@ -186,6 +181,8 @@ async def homepage(request: Request) -> Response:
             result = await request.app.state.gluetun.connectivity_test(credentials)
             request.app.state.connectivity[_session_key(request)] = result
         except ServiceError as error:
+            if error.status_code == 401:
+                return _authentication_failed(request)
             connectivity_error = error
 
     snapshot = None
@@ -218,20 +215,10 @@ async def login(request: Request) -> Response:
     except ServiceError as error:
         return _error_response(error)
     form = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
-    config: Config = request.app.state.config
-    expected = configured_credentials(config)
     supplied = Credentials(
         api_key=_first(form, "api_key"),
     )
 
-    if not credentials_match(expected, supplied):
-        return _template(
-            "login.html",
-            {
-                "error": "The API key is not valid.",
-            },
-            status_code=401,
-        )
     try:
         await request.app.state.gluetun.get_state(supplied)
     except ServiceError as error:
@@ -268,8 +255,6 @@ async def logout(request: Request) -> Response:
 
 async def api_state(request: Request) -> Response:
     credentials = _request_credentials(request)
-    if credentials is None:
-        return _error("authentication_required", "Authentication is required.", 401)
     try:
         state, snapshot = await asyncio.gather(
             request.app.state.gluetun.get_state(credentials),
@@ -282,8 +267,6 @@ async def api_state(request: Request) -> Response:
 
 async def api_selection(request: Request) -> Response:
     credentials = _request_credentials(request)
-    if credentials is None:
-        return _error("authentication_required", "Authentication is required.", 401)
     try:
         body = await _limited_body(request)
         try:
@@ -329,8 +312,6 @@ async def api_selection(request: Request) -> Response:
 
 async def connectivity_test(request: Request) -> Response:
     credentials = _request_credentials(request)
-    if credentials is None:
-        return _error("authentication_required", "Authentication is required.", 401)
     session_key = _session_key(request)
     previous = request.app.state.connectivity.get(session_key)
     after_selection = request.query_params.get("after_selection") == "1"
@@ -481,8 +462,9 @@ def _option_location(field: str, server: Any) -> str:
     return ", ".join(filter(None, parts))
 
 
-def _request_credentials(request: Request) -> Credentials | None:
-    return request.app.state.sessions.get(request.cookies.get(SESSION_COOKIE))
+def _request_credentials(request: Request) -> Credentials:
+    credentials = request.app.state.sessions.get(request.cookies.get(SESSION_COOKIE))
+    return credentials or Credentials(api_key="")
 
 
 async def _limited_body(request: Request) -> bytes:

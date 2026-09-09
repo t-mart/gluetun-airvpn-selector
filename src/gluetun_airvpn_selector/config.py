@@ -7,7 +7,6 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class Config:
     gluetun_base_url: str
-    gluetun_api_key: str
     airvpn_status_url: str
     airvpn_cache_seconds: float
     airvpn_timeout_seconds: float
@@ -17,11 +16,10 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        config = cls(
+        return cls(
             gluetun_base_url=os.getenv(
                 "GLUETUN_BASE_URL", "http://127.0.0.1:8000"
             ).rstrip("/"),
-            gluetun_api_key=os.getenv("GLUETUN_API_KEY", ""),
             airvpn_status_url=os.getenv(
                 "AIRVPN_STATUS_URL", "https://airvpn.org/api/status/"
             ),
@@ -31,12 +29,6 @@ class Config:
             host=os.getenv("HOST", "127.0.0.1"),
             port=_port("PORT", 8081),
         )
-        config.validate()
-        return config
-
-    def validate(self) -> None:
-        if not self.gluetun_api_key:
-            raise ValueError("Set GLUETUN_API_KEY for API key authentication.")
 
 
 def _positive_float(name: str, default: float) -> float:
